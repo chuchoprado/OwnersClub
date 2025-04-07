@@ -106,7 +106,6 @@ class CoachBot:
     def _init_db(self):
         with closing(sqlite3.connect(self.db_path)) as conn:
             cursor = conn.cursor()
-            # Se elimina la tabla de usuarios ya que no se realiza validación de email
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS conversations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -220,6 +219,7 @@ class CoachBot:
                 if run_status.status == 'completed':
                     break
                 elif run_status.status in ['failed', 'cancelled', 'expired']:
+                    logger.error(f"Run status details: {run_status}")
                     raise Exception(f"Run failed with status: {run_status.status}")
                 elif time.time() - start_time > 60:
                     raise TimeoutError("La consulta al asistente tomó demasiado tiempo.")
@@ -247,7 +247,6 @@ class CoachBot:
 
     async def process_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_message: str) -> str:
         chat_id = update.message.chat.id
-        # Obtener o crear un lock específico para este chat
         lock = self.locks.setdefault(chat_id, asyncio.Lock())
         async with lock:
             try:
@@ -454,7 +453,6 @@ class CoachBot:
     async def async_init(self):
         try:
             await self.telegram_app.initialize()
-            # Ya no se carga la verificación de usuarios, acceso libre
             if not self.started:
                 self.started = True
                 await self.telegram_app.start()
@@ -466,7 +464,6 @@ class CoachBot:
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             chat_id = update.message.chat.id
-            # Acceso libre: se saluda siempre sin validación
             await update.message.reply_text("👋 ¡Bienvenido! ¿En qué puedo ayudarte hoy?")
             logger.info(f"Comando /start ejecutado por chat_id: {chat_id}")
         except Exception as e:
@@ -497,7 +494,6 @@ class CoachBot:
 
     async def route_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
-            # Acceso libre: se procesa el mensaje directamente
             await self.handle_message(update, context)
         except Exception as e:
             logger.error(f"Error en route_message: {e}")
@@ -539,7 +535,6 @@ class CoachBot:
             await update.message.reply_text("⚠️ Ocurrió un error inesperado. Inténtalo más tarde.")
 
     async def text_to_speech(self, text, speed=1.0):
-        """Convierte texto a voz con ajuste de velocidad."""
         try:
             temp_dir = os.path.join(os.getcwd(), 'temp')
             os.makedirs(temp_dir, exist_ok=True)
@@ -575,7 +570,6 @@ async def webhook(request: Request):
     try:
         data = await request.json()
         update = Update.de_json(data, bot.telegram_app.bot)
-        # Se invoca directamente el procesamiento del update
         await bot.telegram_app.process_update(update)
         return {"status": "ok"}
     except Exception as e:
