@@ -78,7 +78,6 @@ class CoachBot:
         self.client = AsyncOpenAI(api_key=required_env_vars['OPENAI_API_KEY'])
         self.sheets_service = None
         self.started = False
-        # Se eliminan las verificaciones de email, acceso libre
         self.conversation_history = {}
         self.user_threads = {}
         self.pending_requests = set()
@@ -220,6 +219,8 @@ class CoachBot:
                     break
                 elif run_status.status in ['failed', 'cancelled', 'expired']:
                     logger.error(f"Run status details: {run_status}")
+                    if hasattr(run_status, 'last_error') and run_status.last_error and run_status.last_error.code == 'rate_limit_exceeded':
+                        raise Exception("La cuota de OpenAI ha sido excedida: " + run_status.last_error.message)
                     raise Exception(f"Run failed with status: {run_status.status}")
                 elif time.time() - start_time > 60:
                     raise TimeoutError("La consulta al asistente tomó demasiado tiempo.")
@@ -240,7 +241,7 @@ class CoachBot:
             return assistant_message
         except Exception as e:
             logger.error(f"❌ Error procesando mensaje: {e}")
-            return "⚠️ Ocurrió un error al procesar tu mensaje."
+            return "⚠️ Ocurrió un error al procesar tu mensaje: " + str(e)
         finally:
             if chat_id in self.pending_requests:
                 self.pending_requests.remove(chat_id)
