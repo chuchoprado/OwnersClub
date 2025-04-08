@@ -227,7 +227,10 @@ class CoachBot:
             return assistant_message
         except Exception as e:
             logger.error(f"❌ Error processing message: {e}")
-            return "⚠️ There was an error processing your message: " + str(e)
+            error_message = str(e)
+            if "Can't add messages to" in error_message:
+                return "⏳ Please wait, I'm still processing your previous request."
+            return "⚠️ There was an error processing your message: " + error_message
         finally:
             if chat_id in self.pending_requests:
                 self.pending_requests.remove(chat_id)
