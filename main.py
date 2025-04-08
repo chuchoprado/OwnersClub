@@ -19,6 +19,13 @@ from gtts import gTTS
 from pydub import AudioSegment
 import tempfile
 import subprocess
+import re
+
+def remove_source_references(text: str) -> str:
+    """
+    Removes source reference markers like "" from the text.
+    """
+    return re.sub(r'\【[\d:]+†source\】', '', text)
 
 def normalizeText(text: str) -> str:
     return text.lower().strip()
@@ -211,6 +218,8 @@ class CoachBot:
                 self.pending_requests.remove(chat_id)
                 return "⚠️ The assistant's response is empty. Please try again later."
             assistant_message = messages.data[0].content[0].text.value
+            # Remove any source reference markers from the assistant's message
+            assistant_message = remove_source_references(assistant_message)
             self.conversation_history.setdefault(chat_id, []).append({
                 "role": "assistant",
                 "content": assistant_message
