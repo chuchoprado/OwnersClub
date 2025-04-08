@@ -24,13 +24,13 @@ import subprocess
 
 def extract_product_keywords(query: str) -> str:
     """
-    Extrae palabras clave relevantes eliminando saludos, agradecimientos, puntuación y palabras comunes
-    que no aportan a la búsqueda de productos.
+    Extracts relevant keywords by removing greetings, thank you phrases, punctuation,
+    and common words that do not contribute to the product search.
     """
     stopwords = {
-        "hola", "podrias", "recomendarme", "recomiendes", "por", "favor", "un", "una",
-        "que", "me", "ayude", "a", "dame", "los", "las", "el", "la", "de", "en", "con",
-        "puedes", "puedo", "ok", "ayudarme", "recomendandome", "y", "necesito", "gracias", "adicional"
+        "hello", "could", "recommend", "recommendme", "please", "a", "an",
+        "that", "me", "help", "to", "give", "the", "of", "in", "with",
+        "you_can", "i_can", "ok", "assistme", "recommendingme", "and", "need", "thanks", "additional"
     }
     translator = str.maketrans('', '', string.punctuation)
     cleaned_query = query.translate(translator)
@@ -59,7 +59,7 @@ app = FastAPI()
 
 class CoachBot:
     def __init__(self):
-        # Validar variables de entorno críticas
+        # Validate required environment variables
         required_env_vars = {
             'TELEGRAM_TOKEN': os.getenv('TELEGRAM_TOKEN'),
             'SPREADSHEET_ID': os.getenv('SPREADSHEET_ID'),
@@ -68,13 +68,13 @@ class CoachBot:
         }
         missing_vars = [var for var, value in required_env_vars.items() if not value]
         if missing_vars:
-            raise EnvironmentError(f"Faltan variables de entorno requeridas: {', '.join(missing_vars)}")
+            raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
         self.TELEGRAM_TOKEN = required_env_vars['TELEGRAM_TOKEN']
         self.SPREADSHEET_ID = required_env_vars['SPREADSHEET_ID']
         self.assistant_id = required_env_vars['ASSISTANT_ID']
         self.credentials_path = '/etc/secrets/credentials.json'
 
-        # Inicializar cliente AsyncOpenAI
+        # Initialize AsyncOpenAI client
         self.client = AsyncOpenAI(api_key=required_env_vars['OPENAI_API_KEY'])
         self.sheets_service = None
         self.started = False
@@ -84,17 +84,17 @@ class CoachBot:
         self.db_path = 'bot_data.db'
         self.user_preferences = {}
 
-        # Diccionario para locks por cada chat (para evitar procesar mensajes concurrentes)
+        # Dictionary for locks per chat to prevent concurrent message processing
         self.locks = {}
 
-        # Comandos de voz
+        # Voice commands (mapping Spanish phrases to methods—translated here for your reference)
         self.voice_commands = {
-            "activar voz": self.enable_voice_responses,
-            "desactivar voz": self.disable_voice_responses,
-            "velocidad": self.set_voice_speed,
+            "activate voice": self.enable_voice_responses,
+            "deactivate voice": self.disable_voice_responses,
+            "speed": self.set_voice_speed,
         }
 
-        # Inicializar la aplicación de Telegram
+        # Initialize the Telegram Application
         self.telegram_app = Application.builder().token(self.TELEGRAM_TOKEN).build()
 
         self._init_db()
@@ -150,33 +150,33 @@ class CoachBot:
 
     async def enable_voice_responses(self, chat_id):
         self.save_user_preference(chat_id, voice_responses=True)
-        return "✅ Respuestas por voz activadas. Ahora te responderé con notas de voz."
+        return "✅ Voice responses activated. I'll now reply with voice messages."
 
     async def disable_voice_responses(self, chat_id):
         self.save_user_preference(chat_id, voice_responses=False)
-        return "✅ Respuestas por voz desactivadas. Volveré a responderte con texto."
+        return "✅ Voice responses deactivated. I'll reply with text messages."
 
     async def set_voice_speed(self, chat_id, text):
         try:
-            parts = text.lower().split("velocidad")
+            parts = text.lower().split("speed")
             if len(parts) < 2:
-                return "⚠️ Por favor, especifica un valor para la velocidad, por ejemplo: 'velocidad 1.5'"
+                return "⚠️ Please specify a value for speed, for example: 'speed 1.5'"
             speed_text = parts[1].strip()
             speed = float(speed_text)
             if speed < 0.5 or speed > 2.0:
-                return "⚠️ La velocidad debe estar entre 0.5 (lenta) y 2.0 (rápida)."
+                return "⚠️ Speed must be between 0.5 (slow) and 2.0 (fast)."
             self.save_user_preference(chat_id, voice_speed=speed)
-            return f"✅ Velocidad de voz establecida a {speed}x."
+            return f"✅ Voice speed set to {speed}x."
         except ValueError:
-            return "⚠️ No pude entender el valor de velocidad. Usa un número como 0.8, 1.0, 1.5, etc."
+            return "⚠️ I couldn't understand the speed value. Use a number like 0.8, 1.0, 1.5, etc."
 
     async def process_voice_command(self, chat_id, text):
         text_lower = text.lower()
-        if "activar voz" in text_lower or "activa voz" in text_lower:
+        if "activate voice" in text_lower or "turn on voice" in text_lower:
             return await self.enable_voice_responses(chat_id)
-        if "desactivar voz" in text_lower or "desactiva voz" in text_lower:
+        if "deactivate voice" in text_lower or "turn off voice" in text_lower:
             return await self.disable_voice_responses(chat_id)
-        if "velocidad" in text_lower:
+        if "speed" in text_lower:
             return await self.set_voice_speed(chat_id, text_lower)
         return None
 
@@ -188,18 +188,18 @@ class CoachBot:
             self.user_threads[chat_id] = thread.id
             return thread.id
         except Exception as e:
-            logger.error(f"❌ Error creando thread para {chat_id}: {e}")
+            logger.error(f"❌ Error creating thread for {chat_id}: {e}")
             return None
 
     async def send_message_to_assistant(self, chat_id: int, user_message: str) -> str:
         if chat_id in self.pending_requests:
-            return "⏳ Ya estoy procesando tu solicitud anterior. Por favor espera."
+            return "⏳ I'm already processing your previous request. Please wait."
         self.pending_requests.add(chat_id)
         try:
             thread_id = await self.get_or_create_thread(chat_id)
             if not thread_id:
                 self.pending_requests.remove(chat_id)
-                return "❌ No se pudo establecer conexión con el asistente."
+                return "❌ Could not establish connection with the assistant."
             await self.client.beta.threads.messages.create(
                 thread_id=thread_id,
                 role="user",
@@ -220,10 +220,10 @@ class CoachBot:
                 elif run_status.status in ['failed', 'cancelled', 'expired']:
                     logger.error(f"Run status details: {run_status}")
                     if hasattr(run_status, 'last_error') and run_status.last_error and run_status.last_error.code == 'rate_limit_exceeded':
-                        raise Exception("La cuota de OpenAI ha sido excedida: " + run_status.last_error.message)
+                        raise Exception("OpenAI quota exceeded: " + run_status.last_error.message)
                     raise Exception(f"Run failed with status: {run_status.status}")
                 elif time.time() - start_time > 60:
-                    raise TimeoutError("La consulta al asistente tomó demasiado tiempo.")
+                    raise TimeoutError("The assistant query took too long.")
                 await asyncio.sleep(1)
             messages = await self.client.beta.threads.messages.list(
                 thread_id=thread_id,
@@ -232,7 +232,7 @@ class CoachBot:
             )
             if not messages.data or not messages.data[0].content:
                 self.pending_requests.remove(chat_id)
-                return "⚠️ La respuesta del asistente está vacía. Inténtalo más tarde."
+                return "⚠️ The assistant's response is empty. Please try again later."
             assistant_message = messages.data[0].content[0].text.value
             self.conversation_history.setdefault(chat_id, []).append({
                 "role": "assistant",
@@ -240,8 +240,8 @@ class CoachBot:
             })
             return assistant_message
         except Exception as e:
-            logger.error(f"❌ Error procesando mensaje: {e}")
-            return "⚠️ Ocurrió un error al procesar tu mensaje: " + str(e)
+            logger.error(f"❌ Error processing message: {e}")
+            return "⚠️ There was an error processing your message: " + str(e)
         finally:
             if chat_id in self.pending_requests:
                 self.pending_requests.remove(chat_id)
@@ -252,15 +252,16 @@ class CoachBot:
         async with lock:
             try:
                 if not user_message.strip():
-                    return "⚠️ No se recibió un mensaje válido."
+                    return "⚠️ No valid message received."
                 voice_command_response = await self.process_voice_command(chat_id, user_message)
                 if voice_command_response:
                     return voice_command_response
                 await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
                 filtered_query = extract_product_keywords(user_message)
-                product_keywords = ['producto', 'productos', 'comprar', 'precio', 'costo', 'tienda', 'venta',
-                                    'suplemento', 'meditacion', 'vitaminas', 'vitamina', 'suplementos',
-                                    'libro', 'libros', 'ebook', 'ebooks', 'amazon', 'meditacion']
+                # Define product keywords in English (adapt as needed)
+                product_keywords = ['product', 'products', 'buy', 'price', 'cost', 'store', 'sale',
+                                    'supplement', 'meditation', 'vitamins', 'vitamin', 'supplements',
+                                    'book', 'books', 'ebook', 'ebooks', 'amazon', 'meditation']
                 if any(keyword in filtered_query.lower() for keyword in product_keywords):
                     response = await self.process_product_query(chat_id, user_message)
                     self.save_conversation(chat_id, "user", user_message)
@@ -268,71 +269,71 @@ class CoachBot:
                     return response
                 response = await self.send_message_to_assistant(chat_id, user_message)
                 if not response.strip():
-                    logger.error("⚠️ OpenAI devolvió una respuesta vacía.")
-                    return "⚠️ No obtuve una respuesta válida del asistente. Intenta de nuevo."
+                    logger.error("⚠️ OpenAI returned an empty response.")
+                    return "⚠️ I did not receive a valid response from the assistant. Please try again."
                 self.save_conversation(chat_id, "user", user_message)
                 self.save_conversation(chat_id, "assistant", response)
                 return response
             except Exception as e:
-                logger.error(f"❌ Error en process_text_message: {e}", exc_info=True)
-                return "⚠️ Ocurrió un error al procesar tu mensaje."
-
+                logger.error(f"❌ Error in process_text_message: {e}", exc_info=True)
+                return "⚠️ There was an error processing your message."
+    
     async def process_product_query(self, chat_id: int, query: str) -> str:
         try:
-            logger.info(f"Procesando consulta de productos para {chat_id}: {query}")
+            logger.info(f"Processing product query for {chat_id}: {query}")
             filtered_query = extract_product_keywords(query)
-            logger.info(f"Consulta filtrada: {filtered_query}")
+            logger.info(f"Filtered query: {filtered_query}")
             products = await self.fetch_products(filtered_query)
             if not products or not isinstance(products, dict):
-                logger.error(f"Respuesta inválida del API de productos: {products}")
-                return "⚠️ No se pudieron recuperar productos en este momento."
+                logger.error(f"Invalid response from product API: {products}")
+                return "⚠️ Could not retrieve products at this time."
             if "error" in products:
-                logger.error(f"Error desde API de productos: {products['error']}")
+                logger.error(f"Error from product API: {products['error']}")
                 return f"⚠️ {products['error']}"
             product_data = products.get("data", [])
             if not product_data:
-                return "📦 No encontré productos que coincidan con tu consulta. ¿Puedes ser más específico?"
+                return "📦 I couldn't find any products matching your query. Can you be more specific?"
             product_data = product_data[:5]
             product_list = []
             for p in product_data:
-                title = p.get('titulo') or p.get('fuente', 'Sin título')
-                desc = p.get('descripcion', 'Sin descripción')
-                link = p.get('link', 'No disponible')
+                title = p.get('titulo') or p.get('fuente', 'Untitled')
+                desc = p.get('descripcion', 'No description available')
+                link = p.get('link', 'Not available')
                 if len(desc) > 100:
                     desc = desc[:97] + "..."
-                product_list.append(f"- *{title}*: {desc}\n  🔗 [Ver producto]({link})")
+                product_list.append(f"- *{title}*: {desc}\n  🔗 [View product]({link})")
             formatted_products = "\n\n".join(product_list)
-            return f"🔍 *Productos recomendados:*\n\n{formatted_products}\n\n¿Necesitas más información sobre alguno de estos productos?"
+            return f"🔍 *Recommended products:*\n\n{formatted_products}\n\nDo you need more information about any of these products?"
         except Exception as e:
-            logger.error(f"❌ Error procesando consulta de productos: {e}", exc_info=True)
-            return "⚠️ Ocurrió un error al buscar productos. Por favor, intenta más tarde."
+            logger.error(f"❌ Error processing product query: {e}", exc_info=True)
+            return "⚠️ There was an error searching for products. Please try again later."
 
     async def fetch_products(self, query):
         url = "https://script.google.com/macros/s/AKfycbzA3LeOdELU35eEHMEl9ATWrvsfXTrTsQO4-nFh_iYfrT-sLiH9x8L6YZjBb3Kf1MXa/exec"
         params = {"query": query}
-        logger.info(f"Consultando Google Sheets con: {params}")
+        logger.info(f"Querying Google Sheets with: {params}")
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 response = await client.get(url, params=params, follow_redirects=True)
             if response.status_code != 200:
-                logger.error(f"Error en API de Google Sheets: {response.status_code}, {response.text}")
-                return {"error": f"Error del servidor ({response.status_code})"}
+                logger.error(f"Error in Google Sheets API: {response.status_code}, {response.text}")
+                return {"error": f"Server error ({response.status_code})"}
             try:
                 result = response.json()
-                logger.info("JSON recibido correctamente de la API")
+                logger.info("JSON received correctly from API")
                 return result
             except json.JSONDecodeError as e:
-                logger.error(f"Error decodificando JSON: {e}, respuesta: {response.text[:200]}")
-                return {"error": "Formato de respuesta inválido"}
+                logger.error(f"Error decoding JSON: {e}, response: {response.text[:200]}")
+                return {"error": "Invalid response format"}
         except httpx.TimeoutException:
-            logger.error("⏳ La API de Google Sheets tardó demasiado en responder.")
-            return {"error": "⏳ Tiempo de espera agotado. Inténtalo más tarde."}
+            logger.error("⏳ Google Sheets API took too long to respond.")
+            return {"error": "⏳ Request timed out. Please try again later."}
         except httpx.RequestError as e:
-            logger.error(f"❌ Error de conexión a Google Sheets: {e}")
-            return {"error": "Error de conexión a la base de datos de productos"}
+            logger.error(f"❌ Connection error to Google Sheets: {e}")
+            return {"error": "Connection error to the products database"}
         except Exception as e:
-            logger.error(f"❌ Error inesperado consultando Google Sheets: {e}")
-            return {"error": "Error inesperado consultando productos"}
+            logger.error(f"❌ Unexpected error querying Google Sheets: {e}")
+            return {"error": "Unexpected error querying products"}
 
     def searchProducts(self, data, query, start, limit):
         results = []
@@ -341,15 +342,15 @@ class CoachBot:
         for i in range(start, len(data)):
             if not data[i] or len(data[i]) < 6:
                 continue
-            categoria = normalizeText(data[i][0]) if data[i][0] else ""
-            etiquetas = normalizeText(data[i][1].replace("#", "")) if data[i][1] else ""
-            titulo = normalizeText(data[i][2]) if data[i][2] else ""
+            category = normalizeText(data[i][0]) if data[i][0] else ""
+            tags = normalizeText(data[i][1].replace("#", "")) if data[i][1] else ""
+            title = normalizeText(data[i][2]) if data[i][2] else ""
             link = data[i][3].strip() if data[i][3] else ""
             description = data[i][4].strip() if data[i][4] else ""
-            autor = normalizeText(data[i][5]) if data[i][5] else "desconocido"
-            match = any(word in categoria or word in etiquetas or word in titulo or word in autor for word in queryWords)
+            author = normalizeText(data[i][5]) if data[i][5] else "unknown"
+            match = any(word in category or word in tags or word in title or word in author for word in queryWords)
             if match and link != "":
-                results.append({"link": link, "descripcion": description, "fuente": autor})
+                results.append({"link": link, "descripcion": description, "fuente": author})
                 count += 1
             if count >= limit:
                 break
@@ -359,12 +360,12 @@ class CoachBot:
         try:
             self.telegram_app.add_handler(CommandHandler("start", self.start_command))
             self.telegram_app.add_handler(CommandHandler("help", self.help_command))
-            self.telegram_app.add_handler(CommandHandler("voz", self.voice_settings_command))
+            self.telegram_app.add_handler(CommandHandler("voice", self.voice_settings_command))
             self.telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.route_message))
             self.telegram_app.add_handler(MessageHandler(filters.VOICE, self.handle_voice_message))
-            logger.info("Handlers configurados correctamente")
+            logger.info("Handlers configured successfully")
         except Exception as e:
-            logger.error(f"Error en setup_handlers: {e}")
+            logger.error(f"Error in setup_handlers: {e}")
             raise
 
     async def handle_voice_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -375,25 +376,25 @@ class CoachBot:
             await voice_file.download_to_drive(oga_file_path)
             wav_file_path = f"{chat_id}_voice_note.wav"
             if not convertOgaToWav(oga_file_path, wav_file_path):
-                await update.message.reply_text("⚠️ No se pudo procesar el archivo de audio.")
+                await update.message.reply_text("⚠️ Could not process the audio file.")
                 return
             recognizer = sr.Recognizer()
             with sr.AudioFile(wav_file_path) as source:
                 audio = recognizer.record(source)
             try:
-                user_message = recognizer.recognize_google(audio, language='es-ES')
-                logger.info("Transcripción de voz: " + user_message)
-                await update.message.reply_text(f"📝 Tu mensaje: \"{user_message}\"")
+                user_message = recognizer.recognize_google(audio, language='en-US')
+                logger.info("Voice transcription: " + user_message)
+                await update.message.reply_text(f"📝 Your message: \"{user_message}\"")
                 response = await self.process_text_message(update, context, user_message)
                 await update.message.reply_text(response)
             except sr.UnknownValueError:
-                await update.message.reply_text("⚠️ No pude entender la nota de voz. Intenta de nuevo.")
+                await update.message.reply_text("⚠️ I could not understand the voice note. Please try again.")
             except sr.RequestError as e:
-                logger.error("Error en el servicio de reconocimiento de voz de Google: " + str(e))
-                await update.message.reply_text("⚠️ Ocurrió un error con el servicio de reconocimiento de voz.")
+                logger.error("Error from Google voice recognition service: " + str(e))
+                await update.message.reply_text("⚠️ There was an error with the voice recognition service.")
         except Exception as e:
-            logger.error("Error manejando mensaje de voz: " + str(e))
-            await update.message.reply_text("⚠️ Ocurrió un error procesando la nota de voz.")
+            logger.error("Error handling voice message: " + str(e))
+            await update.message.reply_text("⚠️ There was an error processing your voice note.")
         finally:
             try:
                 if os.path.exists(oga_file_path):
@@ -401,21 +402,21 @@ class CoachBot:
                 if os.path.exists(wav_file_path):
                     os.remove(wav_file_path)
             except Exception as e:
-                logger.error("Error eliminando archivos temporales: " + str(e))
+                logger.error("Error deleting temporary files: " + str(e))
 
     async def voice_settings_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.message.chat.id
         pref = self.user_preferences.get(chat_id, {'voice_responses': False, 'voice_speed': 1.0})
-        voice_status = "activadas" if pref['voice_responses'] else "desactivadas"
+        voice_status = "activated" if pref['voice_responses'] else "deactivated"
         help_text = (
-            "🎙 *Configuración de voz*\n\n"
-            f"Estado actual: Respuestas de voz {voice_status}\n"
-            f"Velocidad actual: {pref['voice_speed']}x\n\n"
-            "*Comandos disponibles:*\n"
-            "- 'Activar voz' - Para recibir respuestas por voz\n"
-            "- 'Desactivar voz' - Para recibir respuestas en texto\n"
-            "- 'Velocidad X.X' - Para ajustar la velocidad (entre 0.5 y 2.0)\n\n"
-            "También puedes usar estos comandos directamente en cualquier mensaje."
+            "🎙 *Voice Settings*\n\n"
+            f"Current status: Voice responses {voice_status}\n"
+            f"Current speed: {pref['voice_speed']}x\n\n"
+            "*Available Commands:*\n"
+            "- 'Activate voice' - To receive voice responses\n"
+            "- 'Deactivate voice' - To receive text responses\n"
+            "- 'Speed X.X' - To adjust the speed (between 0.5 and 2.0)\n\n"
+            "You can also use these commands in any message."
         )
         await update.message.reply_text(help_text, parse_mode='Markdown')
 
@@ -431,7 +432,7 @@ class CoachBot:
     def _init_sheets(self):
         try:
             if not os.path.exists(self.credentials_path):
-                logger.error(f"Archivo de credenciales no encontrado en: {self.credentials_path}")
+                logger.error(f"Credentials file not found at: {self.credentials_path}")
                 return False
             credentials = service_account.Credentials.from_service_account_file(
                 self.credentials_path,
@@ -442,13 +443,13 @@ class CoachBot:
                 self.sheets_service.spreadsheets().get(
                     spreadsheetId=self.SPREADSHEET_ID
                 ).execute()
-                logger.info("Conexión con Google Sheets inicializada correctamente.")
+                logger.info("Google Sheets connection initialized successfully.")
                 return True
             except Exception as e:
-                logger.error(f"Error accediendo al spreadsheet: {e}")
+                logger.error(f"Error accessing spreadsheet: {e}")
                 return False
         except Exception as e:
-            logger.error(f"Error inicializando Google Sheets: {e}")
+            logger.error(f"Error initializing Google Sheets: {e}")
             return False
 
     async def async_init(self):
@@ -457,49 +458,49 @@ class CoachBot:
             if not self.started:
                 self.started = True
                 await self.telegram_app.start()
-            logger.info("Bot inicializado correctamente")
+            logger.info("Bot initialized successfully")
         except Exception as e:
-            logger.error(f"Error en async_init: {e}")
+            logger.error(f"Error in async_init: {e}")
             raise
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             chat_id = update.message.chat.id
-            await update.message.reply_text("👋 ¡Bienvenido! ¿En qué puedo ayudarte hoy?")
-            logger.info(f"Comando /start ejecutado por chat_id: {chat_id}")
+            await update.message.reply_text("👋 Welcome! How can I help you today?")
+            logger.info(f"/start command executed by chat_id: {chat_id}")
         except Exception as e:
-            logger.error(f"Error en start_command: {e}")
-            await update.message.reply_text("❌ Ocurrió un error. Por favor, intenta de nuevo.")
+            logger.error(f"Error in start_command: {e}")
+            await update.message.reply_text("❌ An error occurred. Please try again.")
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             help_text = (
-                "🤖 *Comandos disponibles:*\n\n"
-                "/start - Iniciar o reiniciar el bot\n"
-                "/help - Mostrar este mensaje de ayuda\n"
-                "/voz - Configurar respuestas por voz\n\n"
-                "📝 *Funcionalidades:*\n"
-                "- Consultas sobre ejercicios\n"
-                "- Recomendaciones personalizadas\n"
-                "- Seguimiento de progreso\n"
-                "- Recursos y videos\n"
-                "- Consultas de productos\n"
-                "- Notas de voz (envía o recibe mensajes por voz)\n\n"
-                "✨ Simplemente escribe tu pregunta o envía una nota de voz."
+                "🤖 *Available Commands:*\n\n"
+                "/start - Start or restart the bot\n"
+                "/help - Show this help message\n"
+                "/voice - Configure voice responses\n\n"
+                "📝 *Features:*\n"
+                "- Exercise queries\n"
+                "- Personalized recommendations\n"
+                "- Progress tracking\n"
+                "- Resources and videos\n"
+                "- Product queries\n"
+                "- Voice notes (send or receive voice messages)\n\n"
+                "✨ Simply type your question or send a voice note."
             )
             await update.message.reply_text(help_text, parse_mode='Markdown')
-            logger.info(f"Comando /help ejecutado por chat_id: {update.message.chat.id}")
+            logger.info(f"/help command executed by chat_id: {update.message.chat.id}")
         except Exception as e:
-            logger.error(f"Error en help_command: {e}")
-            await update.message.reply_text("❌ Error mostrando la ayuda. Intenta de nuevo.")
+            logger.error(f"Error in help_command: {e}")
+            await update.message.reply_text("❌ Error displaying help. Please try again.")
 
     async def route_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await self.handle_message(update, context)
         except Exception as e:
-            logger.error(f"Error en route_message: {e}")
+            logger.error(f"Error in route_message: {e}")
             await update.message.reply_text(
-                "❌ Ocurrió un error procesando tu mensaje. Por favor, intenta de nuevo."
+                "❌ An error occurred processing your message. Please try again."
             )
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -513,9 +514,9 @@ class CoachBot:
                 timeout=60.0
             )
             if response is None or not response.strip():
-                raise ValueError("La respuesta del asistente está vacía")
+                raise ValueError("The assistant's response is empty")
             pref = self.user_preferences.get(chat_id, {'voice_responses': False, 'voice_speed': 1.0})
-            if "🔗 [Ver producto]" in response:
+            if "🔗 [View product]" in response:
                 await update.message.reply_text(response, parse_mode='Markdown', disable_web_page_preview=True)
             elif pref['voice_responses'] and len(response) < 4000:
                 voice_note_path = await self.text_to_speech(response, pref['voice_speed'])
@@ -526,22 +527,23 @@ class CoachBot:
             else:
                 await update.message.reply_text(response)
         except asyncio.TimeoutError:
-            logger.error(f"⏳ Timeout procesando mensaje de {chat_id}")
-            await update.message.reply_text("⏳ La operación está tomando demasiado tiempo. Por favor, inténtalo más tarde.")
+            logger.error(f"⏳ Timeout processing message for {chat_id}")
+            await update.message.reply_text("⏳ The operation is taking too long. Please try again later.")
         except openai.OpenAIError as e:
-            logger.error(f"❌ Error en OpenAI: {e}")
-            await update.message.reply_text("❌ Hubo un problema con OpenAI.")
+            logger.error(f"❌ Error with OpenAI: {e}")
+            await update.message.reply_text("❌ There was a problem with OpenAI.")
         except Exception as e:
-            logger.error(f"⚠️ Error inesperado: {e}")
-            await update.message.reply_text("⚠️ Ocurrió un error inesperado. Inténtalo más tarde.")
+            logger.error(f"⚠️ Unexpected error: {e}")
+            await update.message.reply_text("⚠️ An unexpected error occurred. Please try again later.")
 
     async def text_to_speech(self, text, speed=1.0):
+        """Converts text to speech with speed adjustment."""
         try:
             temp_dir = os.path.join(os.getcwd(), 'temp')
             os.makedirs(temp_dir, exist_ok=True)
             temp_filename = f"voice_{int(time.time())}.mp3"
             temp_path = os.path.join(temp_dir, temp_filename)
-            tts = gTTS(text=text, lang='es')
+            tts = gTTS(text=text, lang='en')
             tts.save(temp_path)
             if speed != 1.3:
                 song = AudioSegment.from_mp3(temp_path)
@@ -549,22 +551,22 @@ class CoachBot:
                 new_song.export(temp_path, format="mp3")
             return temp_path
         except Exception as e:
-            print(f"Error en text_to_speech: {e}")
+            print(f"Error in text_to_speech: {e}")
             return None
 
 try:
     bot = CoachBot()
 except Exception as e:
-    logger.error("Error crítico inicializando el bot: " + str(e))
+    logger.error("Critical error initializing the bot: " + str(e))
     raise
 
 @app.on_event("startup")
 async def startup_event():
     try:
         await bot.async_init()
-        logger.info("Aplicación iniciada correctamente")
+        logger.info("Application started successfully")
     except Exception as e:
-        logger.error("❌ Error al iniciar la aplicación: " + str(e))
+        logger.error("❌ Error starting the application: " + str(e))
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -574,5 +576,5 @@ async def webhook(request: Request):
         await bot.telegram_app.process_update(update)
         return {"status": "ok"}
     except Exception as e:
-        logger.error("❌ Error procesando webhook: " + str(e))
+        logger.error("❌ Error processing webhook: " + str(e))
         return {"status": "error", "message": str(e)}
