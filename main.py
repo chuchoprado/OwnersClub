@@ -10,8 +10,6 @@ from fastapi import FastAPI, Request
 from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
 from openai import AsyncOpenAI
 import speech_recognition as sr
 import requests
@@ -21,22 +19,6 @@ from gtts import gTTS
 from pydub import AudioSegment
 import tempfile
 import subprocess
-
-def extract_product_keywords(query: str) -> str:
-    """
-    Extracts relevant keywords by removing greetings, thank you phrases, punctuation,
-    and common words that do not contribute to the product search.
-    """
-    stopwords = {
-        "hello", "could", "recommend", "recommendme", "please", "a", "an",
-        "that", "me", "help", "to", "give", "the", "of", "in", "with",
-        "you_can", "i_can", "ok", "assistme", "recommendingme", "and", "need", "thanks", "additional"
-    }
-    translator = str.maketrans('', '', string.punctuation)
-    cleaned_query = query.translate(translator)
-    words = cleaned_query.split()
-    keywords = [word for word in words if word.lower() not in stopwords]
-    return " ".join(keywords)
 
 def normalizeText(text: str) -> str:
     return text.lower().strip()
@@ -62,7 +44,6 @@ class CoachBot:
         # Validate required environment variables
         required_env_vars = {
             'TELEGRAM_TOKEN': os.getenv('TELEGRAM_TOKEN'),
-            'SPREADSHEET_ID': os.getenv('SPREADSHEET_ID'),
             'ASSISTANT_ID': os.getenv('ASSISTANT_ID'),
             'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY')
         }
@@ -70,13 +51,10 @@ class CoachBot:
         if missing_vars:
             raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
         self.TELEGRAM_TOKEN = required_env_vars['TELEGRAM_TOKEN']
-        self.SPREADSHEET_ID = required_env_vars['SPREADSHEET_ID']
         self.assistant_id = required_env_vars['ASSISTANT_ID']
-        self.credentials_path = '/etc/secrets/credentials.json'
 
         # Initialize AsyncOpenAI client
         self.client = AsyncOpenAI(api_key=required_env_vars['OPENAI_API_KEY'])
-        self.sheets_service = None
         self.started = False
         self.conversation_history = {}
         self.user_threads = {}
@@ -87,7 +65,7 @@ class CoachBot:
         # Dictionary for locks per chat to prevent concurrent message processing
         self.locks = {}
 
-        # Voice commands (mapping Spanish phrases to methods—translated here for your reference)
+        # Voice commands (using English commands)
         self.voice_commands = {
             "activate voice": self.enable_voice_responses,
             "deactivate voice": self.disable_voice_responses,
@@ -99,7 +77,6 @@ class CoachBot:
 
         self._init_db()
         self.setup_handlers()
-        self._init_sheets()
         self._load_user_preferences()
 
     def _init_db(self):
@@ -257,16 +234,7 @@ class CoachBot:
                 if voice_command_response:
                     return voice_command_response
                 await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-                filtered_query = extract_product_keywords(user_message)
-                # Define product keywords in English (adapt as needed)
-                product_keywords = ['product', 'products', 'buy', 'price', 'cost', 'store', 'sale',
-                                    'supplement', 'meditation', 'vitamins', 'vitamin', 'supplements',
-                                    'book', 'books', 'ebook', 'ebooks', 'amazon', 'meditation']
-                if any(keyword in filtered_query.lower() for keyword in product_keywords):
-                    response = await self.process_product_query(chat_id, user_message)
-                    self.save_conversation(chat_id, "user", user_message)
-                    self.save_conversation(chat_id, "assistant", response)
-                    return response
+                # Directly send the user message to the assistant without product search logic
                 response = await self.send_message_to_assistant(chat_id, user_message)
                 if not response.strip():
                     logger.error("⚠️ OpenAI returned an empty response.")
@@ -277,84 +245,6 @@ class CoachBot:
             except Exception as e:
                 logger.error(f"❌ Error in process_text_message: {e}", exc_info=True)
                 return "⚠️ There was an error processing your message."
-    
-    async def process_product_query(self, chat_id: int, query: str) -> str:
-        try:
-            logger.info(f"Processing product query for {chat_id}: {query}")
-            filtered_query = extract_product_keywords(query)
-            logger.info(f"Filtered query: {filtered_query}")
-            products = await self.fetch_products(filtered_query)
-            if not products or not isinstance(products, dict):
-                logger.error(f"Invalid response from product API: {products}")
-                return "⚠️ Could not retrieve products at this time."
-            if "error" in products:
-                logger.error(f"Error from product API: {products['error']}")
-                return f"⚠️ {products['error']}"
-            product_data = products.get("data", [])
-            if not product_data:
-                return "📦 I couldn't find any products matching your query. Can you be more specific?"
-            product_data = product_data[:5]
-            product_list = []
-            for p in product_data:
-                title = p.get('titulo') or p.get('fuente', 'Untitled')
-                desc = p.get('descripcion', 'No description available')
-                link = p.get('link', 'Not available')
-                if len(desc) > 100:
-                    desc = desc[:97] + "..."
-                product_list.append(f"- *{title}*: {desc}\n  🔗 [View product]({link})")
-            formatted_products = "\n\n".join(product_list)
-            return f"🔍 *Recommended products:*\n\n{formatted_products}\n\nDo you need more information about any of these products?"
-        except Exception as e:
-            logger.error(f"❌ Error processing product query: {e}", exc_info=True)
-            return "⚠️ There was an error searching for products. Please try again later."
-
-    async def fetch_products(self, query):
-        url = "https://script.google.com/macros/s/AKfycbzA3LeOdELU35eEHMEl9ATWrvsfXTrTsQO4-nFh_iYfrT-sLiH9x8L6YZjBb3Kf1MXa/exec"
-        params = {"query": query}
-        logger.info(f"Querying Google Sheets with: {params}")
-        try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.get(url, params=params, follow_redirects=True)
-            if response.status_code != 200:
-                logger.error(f"Error in Google Sheets API: {response.status_code}, {response.text}")
-                return {"error": f"Server error ({response.status_code})"}
-            try:
-                result = response.json()
-                logger.info("JSON received correctly from API")
-                return result
-            except json.JSONDecodeError as e:
-                logger.error(f"Error decoding JSON: {e}, response: {response.text[:200]}")
-                return {"error": "Invalid response format"}
-        except httpx.TimeoutException:
-            logger.error("⏳ Google Sheets API took too long to respond.")
-            return {"error": "⏳ Request timed out. Please try again later."}
-        except httpx.RequestError as e:
-            logger.error(f"❌ Connection error to Google Sheets: {e}")
-            return {"error": "Connection error to the products database"}
-        except Exception as e:
-            logger.error(f"❌ Unexpected error querying Google Sheets: {e}")
-            return {"error": "Unexpected error querying products"}
-
-    def searchProducts(self, data, query, start, limit):
-        results = []
-        count = 0
-        queryWords = query.split()
-        for i in range(start, len(data)):
-            if not data[i] or len(data[i]) < 6:
-                continue
-            category = normalizeText(data[i][0]) if data[i][0] else ""
-            tags = normalizeText(data[i][1].replace("#", "")) if data[i][1] else ""
-            title = normalizeText(data[i][2]) if data[i][2] else ""
-            link = data[i][3].strip() if data[i][3] else ""
-            description = data[i][4].strip() if data[i][4] else ""
-            author = normalizeText(data[i][5]) if data[i][5] else "unknown"
-            match = any(word in category or word in tags or word in title or word in author for word in queryWords)
-            if match and link != "":
-                results.append({"link": link, "descripcion": description, "fuente": author})
-                count += 1
-            if count >= limit:
-                break
-        return results
 
     def setup_handlers(self):
         try:
@@ -429,40 +319,17 @@ class CoachBot:
             ''', (chat_id, role, content))
             conn.commit()
 
-    def _init_sheets(self):
-        try:
-            if not os.path.exists(self.credentials_path):
-                logger.error(f"Credentials file not found at: {self.credentials_path}")
-                return False
-            credentials = service_account.Credentials.from_service_account_file(
-                self.credentials_path,
-                scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
-            )
-            self.sheets_service = build('sheets', 'v4', credentials=credentials)
-            try:
-                self.sheets_service.spreadsheets().get(
-                    spreadsheetId=self.SPREADSHEET_ID
-                ).execute()
-                logger.info("Google Sheets connection initialized successfully.")
-                return True
-            except Exception as e:
-                logger.error(f"Error accessing spreadsheet: {e}")
-                return False
-        except Exception as e:
-            logger.error(f"Error initializing Google Sheets: {e}")
-            return False
-
     async def async_init(self):
-    try:
-        await self.telegram_app.initialize()
-        if not self.started:
-            self.started = True
-            # Remove or comment out the following line if you're using webhooks:
-            # await self.telegram_app.start()
-        logger.info("Bot initialized successfully")
-    except Exception as e:
-        logger.error(f"Error in async_init: {e}")
-        raise
+        try:
+            await self.telegram_app.initialize()
+            if not self.started:
+                self.started = True
+                # Polling loop is disabled as we use webhooks.
+                # await self.telegram_app.start()
+            logger.info("Bot initialized successfully")
+        except Exception as e:
+            logger.error(f"Error in async_init: {e}")
+            raise
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
@@ -485,7 +352,6 @@ class CoachBot:
                 "- Personalized recommendations\n"
                 "- Progress tracking\n"
                 "- Resources and videos\n"
-                "- Product queries\n"
                 "- Voice notes (send or receive voice messages)\n\n"
                 "✨ Simply type your question or send a voice note."
             )
@@ -516,17 +382,9 @@ class CoachBot:
             )
             if response is None or not response.strip():
                 raise ValueError("The assistant's response is empty")
-            pref = self.user_preferences.get(chat_id, {'voice_responses': False, 'voice_speed': 1.0})
-            if "🔗 [View product]" in response:
-                await update.message.reply_text(response, parse_mode='Markdown', disable_web_page_preview=True)
-            elif pref['voice_responses'] and len(response) < 4000:
-                voice_note_path = await self.text_to_speech(response, pref['voice_speed'])
-                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.RECORD_AUDIO)
-                with open(voice_note_path, 'rb') as audio:
-                    await update.message.reply_voice(audio)
-                os.remove(voice_note_path)
-            else:
-                await update.message.reply_text(response)
+            self.save_conversation(chat_id, "user", user_message)
+            self.save_conversation(chat_id, "assistant", response)
+            await update.message.reply_text(response)
         except asyncio.TimeoutError:
             logger.error(f"⏳ Timeout processing message for {chat_id}")
             await update.message.reply_text("⏳ The operation is taking too long. Please try again later.")
