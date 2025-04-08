@@ -453,15 +453,16 @@ class CoachBot:
             return False
 
     async def async_init(self):
-        try:
-            await self.telegram_app.initialize()
-            if not self.started:
-                self.started = True
-                await self.telegram_app.start()
-            logger.info("Bot initialized successfully")
-        except Exception as e:
-            logger.error(f"Error in async_init: {e}")
-            raise
+    try:
+        await self.telegram_app.initialize()
+        if not self.started:
+            self.started = True
+            # Remove or comment out the following line if you're using webhooks:
+            # await self.telegram_app.start()
+        logger.info("Bot initialized successfully")
+    except Exception as e:
+        logger.error(f"Error in async_init: {e}")
+        raise
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
